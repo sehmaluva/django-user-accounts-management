@@ -1,10 +1,4 @@
-from django.contrib import auth, messages
-from django.contrib.auth import get_user_model
-from django.contrib.auth.hashers import make_password
-from django.contrib.auth.tokens import default_token_generator
-from django.contrib.sites.shortcuts import get_current_site
-from django.core.exceptions import ImproperlyConfigured
-from django.http import Http404, HttpResponseForbidden
+from django.http import Http404, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -13,7 +7,7 @@ from django.utils.translation import gettext_lazy as _
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.debug import sensitive_post_parameters
-from django.views.generic.base import TemplateResponseMixin, View
+from django.views.generic.base import View
 from django.views.generic.edit import FormView
 
 from account import signals
@@ -27,7 +21,6 @@ from account.forms import (
     SignupForm,
 )
 from account.hooks import hookset
-from account.mixins import LoginRequiredMixin
 from account.models import (
     Account,
     AccountDeletion,
@@ -37,6 +30,11 @@ from account.models import (
     SignupCode,
 )
 from account.utils import default_redirect, get_form_data, is_ajax
+
+
+class JsonResponseMixin:
+    def render_to_json_response(self, context, **response_kwargs):
+        return JsonResponse(context, **response_kwargs)
 
 
 class PasswordMixin:
@@ -61,20 +59,22 @@ class PasswordMixin:
     messages = {
         "password_changed": {
             "level": messages.SUCCESS,
-            "text": _("Password successfully changed.")
+            "text": _("Password successfully changed."),
         }
     }
 
     def get_context_data(self, **kwargs):
         ctx = super(PasswordMixin, self).get_context_data(**kwargs)
         redirect_field_name = self.get_redirect_field_name()
-        ctx.update({
-            "redirect_field_name": redirect_field_name,
-            "redirect_field_value": self.request.POST.get(
-                redirect_field_name,
-                self.request.GET.get(redirect_field_name, ""),
-            ),
-        })
+        ctx.update(
+            {
+                "redirect_field_name": redirect_field_name,
+                "redirect_field_value": self.request.POST.get(
+                    redirect_field_name,
+                    self.request.GET.get(redirect_field_name, ""),
+                ),
+            }
+        )
         return ctx
 
     def change_password(self, form):
@@ -92,7 +92,7 @@ class PasswordMixin:
             messages.add_message(
                 self.request,
                 self.messages["password_changed"]["level"],
-                self.messages["password_changed"]["text"]
+                self.messages["password_changed"]["text"],
             )
 
     def get_redirect_field_name(self):
@@ -117,38 +117,14 @@ class PasswordMixin:
     def create_password_history(self, form, user):
         if settings.ACCOUNT_PASSWORD_USE_HISTORY:
             password = form.cleaned_data[self.form_password_field]
-            PasswordHistory.objects.create(
-                user=user,
-                password=make_password(password)
-            )
+            PasswordHistory.objects.create(user=user, password=make_password(password))
 
 
-class SignupView(PasswordMixin, FormView):
-
-    template_name = "account/signup.html"
-    template_name_ajax = "account/ajax/signup.html"
-    template_name_email_confirmation_sent = "account/email_confirmation_sent.html"
-    template_name_email_confirmation_sent_ajax = "account/ajax/email_confirmation_sent.html"
-    template_name_signup_closed = "account/signup_closed.html"
-    template_name_signup_closed_ajax = "account/ajax/signup_closed.html"
-    template_name_admin_approval_sent = "account/admin_approval_sent.html"
-    template_name_admin_approval_sent_ajax = "account/ajax/admin_approval_sent.html"
+class SignupView(JsonResponseMixin, PasswordMixin, FormView):
     form_class = SignupForm
     form_kwargs = {}
     form_password_field = "password"
-    redirect_field_name = "next"
     identifier_field = "username"
-    messages = {
-        "email_confirmation_sent": {
-            "level": messages.INFO,
-            "text": _("Confirmation email sent to {email}.")
-        },
-        "invalid_signup_code": {
-            "level": messages.WARNING,
-            "text": _("The code {code} is invalid.")
-        }
-    }
-    fallback_url_setting = "ACCOUNT_SIGNUP_REDIRECT_URL"
 
     def __init__(self, *args, **kwargs):
         self.created_user = None
@@ -179,7 +155,9 @@ class SignupView(PasswordMixin, FormView):
 
     def get(self, *args, **kwargs):
         if self.request.user.is_authenticated:
-            return redirect(default_redirect(self.request, settings.ACCOUNT_LOGIN_REDIRECT_URL))
+            return redirect(
+                default_redirect(self.request, settings.ACCOUNT_LOGIN_REDIRECT_URL)
+            )
         if not self.is_open():
             return self.closed()
         return super(SignupView, self).get(*args, **kwargs)
@@ -210,13 +188,7 @@ class SignupView(PasswordMixin, FormView):
         return kwargs
 
     def form_invalid(self, form):
-        signals.user_sign_up_attempt.send(
-            sender=SignupForm,
-            username=get_form_data(form, self.identifier_field),
-            email=get_form_data(form, "email"),
-            result=form.is_valid()
-        )
-        return super(SignupView, self).form_invalid(form)
+        return self.render_to_json_response({"errors": form.errors}, status=400)
 
     def form_valid(self, form):
         self.created_user = self.create_user(form, commit=False)
@@ -244,22 +216,16 @@ class SignupView(PasswordMixin, FormView):
         show_message = [
             settings.ACCOUNT_EMAIL_CONFIRMATION_EMAIL,
             self.messages.get("email_confirmation_sent"),
-            not email_address.verified
+            not email_address.verified,
         ]
         if all(show_message):
-            messages.add_message(
-                self.request,
-                self.messages["email_confirmation_sent"]["level"],
-                self.messages["email_confirmation_sent"]["text"].format(**{
-                    "email": form.cleaned_data["email"]
-                })
-            )
+            pass
         # attach form to self to maintain compatibility with login_user
         # API. this should only be relied on by d-u-a and it is not a stable
         # API for site developers.
         self.form = form  # skipcq: PYL-W0201
         self.login_user()
-        return redirect(self.get_success_url())
+        return self.render_to_json_response({"success": True}, status=201)
 
     def create_user(self, form, commit=True, model=None, **kwargs):
         User = model
@@ -281,7 +247,9 @@ class SignupView(PasswordMixin, FormView):
         return user
 
     def create_account(self, form):  # skipcq: PYL-W0613
-        return Account.create(request=self.request, user=self.created_user, create_email=False)
+        return Account.create(
+            request=self.request, user=self.created_user, create_email=False
+        )
 
     def generate_username(self, form):
         raise NotImplementedError(
@@ -293,8 +261,14 @@ class SignupView(PasswordMixin, FormView):
         kwargs.setdefault("primary", True)
         kwargs.setdefault("verified", False)
         if self.signup_code:
-            kwargs["verified"] = self.created_user.email == self.signup_code.email if self.signup_code.email else False
-        return EmailAddress.objects.add_email(self.created_user, self.created_user.email, **kwargs)
+            kwargs["verified"] = (
+                self.created_user.email == self.signup_code.email
+                if self.signup_code.email
+                else False
+            )
+        return EmailAddress.objects.add_email(
+            self.created_user, self.created_user.email, **kwargs
+        )
 
     def use_signup_code(self, user):
         if self.signup_code:
@@ -304,12 +278,16 @@ class SignupView(PasswordMixin, FormView):
         email_address.send_confirmation(site=get_current_site(self.request))
 
     def after_signup(self, form):
-        signals.user_signed_up.send(sender=SignupForm, user=self.created_user, form=form)
+        signals.user_signed_up.send(
+            sender=SignupForm, user=self.created_user, form=form
+        )
 
     def login_user(self):
         user = auth.authenticate(**self.user_credentials())
         if not user:
-            raise ImproperlyConfigured("Configured auth backends failed to authenticate on signup")
+            raise ImproperlyConfigured(
+                "Configured auth backends failed to authenticate on signup"
+            )
         auth.login(self.request, user)
         self.request.session.set_expiry(0)
 
@@ -327,9 +305,11 @@ class SignupView(PasswordMixin, FormView):
             messages.add_message(
                 self.request,
                 self.messages["invalid_signup_code"]["level"],
-                self.messages["invalid_signup_code"]["text"].format(**{
-                    "code": self.get_code(),
-                })
+                self.messages["invalid_signup_code"]["text"].format(
+                    **{
+                        "code": self.get_code(),
+                    }
+                ),
             )
 
         return settings.ACCOUNT_OPEN_SIGNUP
@@ -345,7 +325,7 @@ class SignupView(PasswordMixin, FormView):
             "context": {
                 "email": self.created_user.email,
                 "success_url": self.get_success_url(),
-            }
+            },
         }
         return self.response_class(**response_kwargs)
 
@@ -372,18 +352,14 @@ class SignupView(PasswordMixin, FormView):
             "context": {
                 "email": self.created_user.email,
                 "success_url": self.get_success_url(),
-            }
+            },
         }
         return self.response_class(**response_kwargs)
 
 
-class LoginView(FormView):
-
-    template_name = "account/login.html"
-    template_name_ajax = "account/ajax/login.html"
+class LoginView(JsonResponseMixin, FormView):
     form_class = LoginUsernameForm
     form_kwargs = {}
-    redirect_field_name = "next"
 
     @method_decorator(sensitive_post_parameters())
     @method_decorator(csrf_protect)
@@ -393,66 +369,40 @@ class LoginView(FormView):
 
     def get(self, *args, **kwargs):
         if self.request.user.is_authenticated:
-            return redirect(self.get_success_url())
-        return super(LoginView, self).get(*args, **kwargs)
-
-    def get_template_names(self):
-        if is_ajax(self.request):
-            return [self.template_name_ajax]
-        return [self.template_name]
-
-    def get_context_data(self, **kwargs):
-        ctx = super(LoginView, self).get_context_data(**kwargs)
-        redirect_field_name = self.get_redirect_field_name()
-        ctx.update({
-            "redirect_field_name": redirect_field_name,
-            "redirect_field_value": self.request.POST.get(
-                redirect_field_name,
-                self.request.GET.get(redirect_field_name, ""),
-            ),
-        })
-        return ctx
-
-    def get_form_kwargs(self):
-        kwargs = super(LoginView, self).get_form_kwargs()
-        kwargs.update(self.form_kwargs)
-        return kwargs
+            return self.render_to_json_response({"message": "Already logged in."})
+        return self.render_to_json_response(
+            {"error": "GET method not supported. Please use POST."}, status=405
+        )
 
     def form_invalid(self, form):
         signals.user_login_attempt.send(
             sender=LoginView,
             username=get_form_data(form, form.identifier_field),
-            result=form.is_valid()
+            result=form.is_valid(),
         )
-        return super(LoginView, self).form_invalid(form)
+        return self.render_to_json_response({"errors": form.errors}, status=400)
 
     def form_valid(self, form):
         self.login_user(form)
         self.after_login(form)
-        return redirect(self.get_success_url())
+        return self.render_to_json_response({"success": True})
 
     @staticmethod
     def after_login(form):
         signals.user_logged_in.send(sender=LoginView, user=form.user, form=form)
 
-    def get_success_url(self, fallback_url=None, **kwargs):
-        if fallback_url is None:
-            fallback_url = settings.ACCOUNT_LOGIN_REDIRECT_URL
-        kwargs.setdefault("redirect_field_name", self.get_redirect_field_name())
-        return default_redirect(self.request, fallback_url, **kwargs)
-
-    def get_redirect_field_name(self):
-        return self.redirect_field_name
-
     def login_user(self, form):
         auth.login(self.request, form.user)
-        expiry = settings.ACCOUNT_REMEMBER_ME_EXPIRY if form.cleaned_data.get("remember") else 0
+        expiry = (
+            settings.ACCOUNT_REMEMBER_ME_EXPIRY
+            if form.cleaned_data.get("remember")
+            else 0
+        )
         self.request.session.set_expiry(expiry)
 
 
-class LogoutView(TemplateResponseMixin, View):
+class LogoutView(JsonResponseMixin, View):
 
-    template_name = "account/logout.html"
     redirect_field_name = "next"
 
     @method_decorator(never_cache)
@@ -461,62 +411,18 @@ class LogoutView(TemplateResponseMixin, View):
 
     def get(self, *args, **kwargs):
         if not self.request.user.is_authenticated:
-            return redirect(self.get_redirect_url())
-        ctx = self.get_context_data()
-        return self.render_to_response(ctx)
+            return self.render_to_json_response({"error": "Not logged in."}, status=400)
+        return self.render_to_json_response(
+            {"error": "GET method not supported. Please use POST."}, status=405
+        )
 
     def post(self, *args, **kwargs):
         if self.request.user.is_authenticated:
             auth.logout(self.request)
-        return redirect(self.get_redirect_url())
-
-    def get_context_data(self, **kwargs):
-        ctx = kwargs
-        redirect_field_name = self.get_redirect_field_name()
-        ctx.update({
-            "redirect_field_name": redirect_field_name,
-            "redirect_field_value": self.request.POST.get(
-                redirect_field_name,
-                self.request.GET.get(redirect_field_name, ""),
-            ),
-        })
-        return ctx
-
-    def get_redirect_field_name(self):
-        return self.redirect_field_name
-
-    def get_redirect_url(self, fallback_url=None, **kwargs):
-        if fallback_url is None:
-            fallback_url = settings.ACCOUNT_LOGOUT_REDIRECT_URL
-        kwargs.setdefault("redirect_field_name", self.get_redirect_field_name())
-        return default_redirect(self.request, fallback_url, **kwargs)
+        return self.render_to_json_response({"success": True})
 
 
-class ConfirmEmailView(TemplateResponseMixin, View):
-
-    http_method_names = ["get", "post"]
-    messages = {
-        "email_confirmed": {
-            "level": messages.SUCCESS,
-            "text": _("You have confirmed {email}.")
-        },
-        "email_confirmation_expired": {
-            "level": messages.ERROR,
-            "text": _("Email confirmation for {email} has expired.")
-        }
-    }
-
-    def get_template_names(self):
-        return {
-            "GET": ["account/email_confirm.html"],
-            "POST": ["account/email_confirmed.html"],
-        }[self.request.method]
-
-    def get(self, *args, **kwargs):
-        self.object = self.get_object()
-        ctx = self.get_context_data()
-        return self.render_to_response(ctx)
-
+class ConfirmEmailView(JsonResponseMixin, View):
     def post(self, *args, **kwargs):
         self.object = confirmation = self.get_object()
         self.user = self.request.user
@@ -525,28 +431,11 @@ class ConfirmEmailView(TemplateResponseMixin, View):
             self.after_confirmation(confirmation)
             if settings.ACCOUNT_EMAIL_CONFIRMATION_AUTO_LOGIN:
                 self.user = self.login_user(confirmation.email_address.user)
-            redirect_url = self.get_redirect_url()
-            if not redirect_url:
-                ctx = self.get_context_data()
-                return self.render_to_response(ctx)
-            if self.messages.get("email_confirmed"):
-                messages.add_message(
-                    self.request,
-                    self.messages["email_confirmed"]["level"],
-                    self.messages["email_confirmed"]["text"].format(**{
-                        "email": confirmation.email_address.email
-                    })
-                )
+            return self.render_to_json_response({"success": True})
         else:
-            redirect_url = self.get_redirect_url()
-            messages.add_message(
-                self.request,
-                self.messages["email_confirmation_expired"]["level"],
-                self.messages["email_confirmation_expired"]["text"].format(**{
-                    "email": confirmation.email_address.email
-                })
+            return self.render_to_json_response(
+                {"error": "Email confirmation has expired."}, status=400
             )
-        return redirect(redirect_url)
 
     def get_object(self, queryset=None):
         if queryset is None:
@@ -586,24 +475,18 @@ class ConfirmEmailView(TemplateResponseMixin, View):
         return user
 
 
-class ChangePasswordView(PasswordMixin, FormView):
-
-    template_name = "account/password_change.html"
+class ChangePasswordView(JsonResponseMixin, PasswordMixin, FormView):
     form_class = ChangePasswordForm
-    redirect_field_name = "next"
-    messages = {
-        "password_changed": {
-            "level": messages.SUCCESS,
-            "text": _("Password successfully changed.")
-        }
-    }
     form_password_field = "password_new"
-    fallback_url_setting = "ACCOUNT_PASSWORD_CHANGE_REDIRECT_URL"
 
     def get(self, *args, **kwargs):
         if not self.request.user.is_authenticated:
-            return redirect("account_password_reset")
-        return super(ChangePasswordView, self).get(*args, **kwargs)
+            return self.render_to_json_response(
+                {"error": "Authentication required."}, status=401
+            )
+        return self.render_to_json_response(
+            {"error": "GET method not supported. Please use POST."}, status=405
+        )
 
     def post(self, *args, **kwargs):
         if not self.request.user.is_authenticated:
@@ -614,7 +497,7 @@ class ChangePasswordView(PasswordMixin, FormView):
         self.change_password(form)
         self.create_password_history(form, self.request.user)
         self.after_change_password()
-        return redirect(self.get_success_url())
+        return self.render_to_json_response({"success": True})
 
     def get_user(self):
         return self.request.user
@@ -623,10 +506,12 @@ class ChangePasswordView(PasswordMixin, FormView):
         """Returns the keyword arguments for instantiating the form."""
         kwargs = {"user": self.request.user, "initial": self.get_initial()}
         if self.request.method in ["POST", "PUT"]:
-            kwargs.update({
-                "data": self.request.POST,
-                "files": self.request.FILES,
-            })
+            kwargs.update(
+                {
+                    "data": self.request.POST,
+                    "files": self.request.FILES,
+                }
+            )
         return kwargs
 
     def change_password(self, form):
@@ -636,10 +521,7 @@ class ChangePasswordView(PasswordMixin, FormView):
             auth.update_session_auth_hash(self.request, user)
 
 
-class PasswordResetView(FormView):
-
-    template_name = "account/password_reset.html"
-    template_name_sent = "account/password_reset_sent.html"
+class PasswordResetView(JsonResponseMixin, FormView):
     form_class = PasswordResetForm
     token_generator = default_token_generator
 
@@ -647,20 +529,9 @@ class PasswordResetView(FormView):
     def dispatch(self, *args, **kwargs):
         return super(PasswordResetView, self).dispatch(*args, **kwargs)
 
-    def get_context_data(self, **kwargs):
-        context = super(PasswordResetView, self).get_context_data(**kwargs)
-        if self.request.method == "POST" and "resend" in self.request.POST:
-            context["resend"] = True
-        return context
-
     def form_valid(self, form):
         self.send_email(form.cleaned_data["email"])
-        response_kwargs = {
-            "request": self.request,
-            "template": self.template_name_sent,
-            "context": self.get_context_data(form=form)
-        }
-        return self.response_class(**response_kwargs)
+        return self.render_to_json_response({"success": True})
 
     def send_email(self, email):
         User = get_user_model()
@@ -670,7 +541,10 @@ class PasswordResetView(FormView):
         for user in User.objects.filter(pk__in=email_qs.values("user")):
             uid = int_to_base36(user.id)
             token = self.make_token(user)
-            path = reverse(settings.ACCOUNT_PASSWORD_RESET_TOKEN_URL, kwargs=dict(uidb36=uid, token=token))
+            path = reverse(
+                settings.ACCOUNT_PASSWORD_RESET_TOKEN_URL,
+                kwargs=dict(uidb36=uid, token=token),
+            )
             password_reset_url = f"{protocol}://{current_site.domain}{path}"
             ctx = {
                 "user": user,
@@ -687,14 +561,10 @@ INTERNAL_RESET_URL_TOKEN = "set-password"
 INTERNAL_RESET_SESSION_TOKEN = "_password_reset_token"
 
 
-class PasswordResetTokenView(PasswordMixin, FormView):
-
-    template_name = "account/password_reset_token.html"
-    template_name_fail = "account/password_reset_token_fail.html"
+class PasswordResetTokenView(JsonResponseMixin, PasswordMixin, FormView):
     form_class = PasswordResetTokenForm
     token_generator = default_token_generator
     form_password_field = "password"
-    fallback_url_setting = "ACCOUNT_PASSWORD_RESET_REDIRECT_URL"
 
     @method_decorator(sensitive_post_parameters())
     @method_decorator(never_cache)
@@ -703,39 +573,22 @@ class PasswordResetTokenView(PasswordMixin, FormView):
         if user is not None:
             token = kwargs["token"]
             if token == INTERNAL_RESET_URL_TOKEN:
-                session_token = self.request.session.get(INTERNAL_RESET_SESSION_TOKEN, "")
+                session_token = self.request.session.get(
+                    INTERNAL_RESET_SESSION_TOKEN, ""
+                )
                 if self.check_token(user, session_token):
                     return super(PasswordResetTokenView, self).dispatch(*args, **kwargs)
             else:
                 if self.check_token(user, token):
-                    # Store the token in the session and redirect to the
-                    # password reset form at a URL without the token. That
-                    # avoids the possibility of leaking the token in the
-                    # HTTP Referer header.
                     self.request.session[INTERNAL_RESET_SESSION_TOKEN] = token
-                    redirect_url = self.request.path.replace(token, INTERNAL_RESET_URL_TOKEN)
-                    return redirect(redirect_url)
+                    return self.render_to_json_response({"success": True})
         return self.token_fail()
-
-    def get(self, request, **kwargs):
-        form_class = self.get_form_class()
-        form = self.get_form(form_class)
-        ctx = self.get_context_data(form=form)
-        return self.render_to_response(ctx)
-
-    def get_context_data(self, **kwargs):
-        ctx = super(PasswordResetTokenView, self).get_context_data(**kwargs)
-        ctx.update({
-            "uidb36": self.kwargs["uidb36"],
-            "token": self.kwargs["token"],
-        })
-        return ctx
 
     def form_valid(self, form):
         self.change_password(form)
         self.create_password_history(form, self.get_user())
         self.after_change_password()
-        return redirect(self.get_success_url())
+        return self.render_to_json_response({"success": True})
 
     def get_user(self):
         try:
@@ -748,30 +601,13 @@ class PasswordResetTokenView(PasswordMixin, FormView):
         return self.token_generator.check_token(user, token)
 
     def token_fail(self):
-        response_kwargs = {
-            "request": self.request,
-            "template": self.template_name_fail,
-            "context": self.get_context_data()
-        }
-        return self.response_class(**response_kwargs)
+        return self.render_to_json_response({"error": "Invalid token."}, status=400)
 
 
-class SettingsView(LoginRequiredMixin, FormView):
-
-    template_name = "account/settings.html"
+class SettingsView(JsonResponseMixin, FormView):
     form_class = SettingsForm
-    redirect_field_name = "next"
-    messages = {
-        "settings_updated": {
-            "level": messages.SUCCESS,
-            "text": _("Account settings updated.")
-        },
-    }
 
     def get_form_class(self):
-        # @@@ django: this is a workaround to not having a dedicated method
-        # to initialize self with a request in a known good state (of course
-        # this only works with a FormView)
         self.primary_email_address = EmailAddress.objects.get_primary(self.request.user)
         return super(SettingsView, self).get_form_class()
 
@@ -785,13 +621,7 @@ class SettingsView(LoginRequiredMixin, FormView):
 
     def form_valid(self, form):
         self.update_settings(form)
-        if self.messages.get("settings_updated"):
-            messages.add_message(
-                self.request,
-                self.messages["settings_updated"]["level"],
-                self.messages["settings_updated"]["text"]
-            )
-        return redirect(self.get_success_url())
+        return self.render_to_json_response({"success": True})
 
     def update_settings(self, form):
         self.update_email(form)
@@ -801,27 +631,16 @@ class SettingsView(LoginRequiredMixin, FormView):
         user = self.request.user
         if confirm is None:
             confirm = settings.ACCOUNT_EMAIL_CONFIRMATION_EMAIL
-        # @@@ handle multiple emails per user
         email = form.cleaned_data["email"].strip()
         if not self.primary_email_address:
             user.email = email
-            EmailAddress.objects.add_email(self.request.user, email, primary=True, confirm=confirm)
+            EmailAddress.objects.add_email(
+                self.request.user, email, primary=True, confirm=confirm
+            )
             user.save()
         else:
             if email != self.primary_email_address.email:
                 self.primary_email_address.change(email, confirm=confirm)
-
-    def get_context_data(self, **kwargs):
-        ctx = super(SettingsView, self).get_context_data(**kwargs)
-        redirect_field_name = self.get_redirect_field_name()
-        ctx.update({
-            "redirect_field_name": redirect_field_name,
-            "redirect_field_value": self.request.POST.get(
-                redirect_field_name,
-                self.request.GET.get(redirect_field_name, ""),
-            ),
-        })
-        return ctx
 
     def update_account(self, form):
         fields = {}
@@ -835,40 +654,13 @@ class SettingsView(LoginRequiredMixin, FormView):
                 setattr(account, k, v)
             account.save()
 
-    def get_redirect_field_name(self):
-        return self.redirect_field_name
 
-    def get_success_url(self, fallback_url=None, **kwargs):
-        if fallback_url is None:
-            fallback_url = settings.ACCOUNT_SETTINGS_REDIRECT_URL
-        kwargs.setdefault("redirect_field_name", self.get_redirect_field_name())
-        return default_redirect(self.request, fallback_url, **kwargs)
-
-
-class DeleteView(LoginRequiredMixin, LogoutView):
-
-    template_name = "account/delete.html"
-    messages = {
-        "account_deleted": {
-            "level": messages.WARNING,
-            "text": _("Your account is now inactive and your data will be expunged in the next {expunge_hours} hours.")
-        },
-    }
-
+class DeleteView(JsonResponseMixin, View):
     def post(self, *args, **kwargs):
+        if not self.request.user.is_authenticated:
+            return self.render_to_json_response(
+                {"error": "Authentication required."}, status=401
+            )
         AccountDeletion.mark(self.request.user)
         auth.logout(self.request)
-        messages.add_message(
-            self.request,
-            self.messages["account_deleted"]["level"],
-            self.messages["account_deleted"]["text"].format(**{
-                "expunge_hours": settings.ACCOUNT_DELETION_EXPUNGE_HOURS,
-            })
-        )
-        return redirect(self.get_redirect_url())
-
-    def get_context_data(self, **kwargs):
-        ctx = super(DeleteView, self).get_context_data(**kwargs)
-        ctx.update(kwargs)
-        ctx["ACCOUNT_DELETION_EXPUNGE_HOURS"] = settings.ACCOUNT_DELETION_EXPUNGE_HOURS
-        return ctx
+        return self.render_to_json_response({"success": True})

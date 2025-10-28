@@ -11,7 +11,6 @@ from account.models import (
 
 
 class SignupCodeAdmin(admin.ModelAdmin):
-
     list_display = ["code", "max_uses", "use_count", "expiry", "created"]
     search_fields = ["code", "email"]
     list_filter = ["created"]
@@ -19,41 +18,30 @@ class SignupCodeAdmin(admin.ModelAdmin):
 
 
 class AccountAdmin(admin.ModelAdmin):
-
     raw_id_fields = ["user"]
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('user')
 
 
 class AccountDeletionAdmin(AccountAdmin):
-
     list_display = ["email", "date_requested", "date_expunged"]
 
 
 class EmailAddressAdmin(AccountAdmin):
-
     list_display = ["user", "email", "verified", "primary"]
     search_fields = ["email", "user__username"]
 
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('user')
-
 
 class PasswordExpiryAdmin(admin.ModelAdmin):
-
     raw_id_fields = ["user"]
 
 
 class PasswordHistoryAdmin(admin.ModelAdmin):
-
     raw_id_fields = ["user"]
     list_display = ["user", "timestamp"]
     list_filter = ["user"]
     ordering = ["user__username", "-timestamp"]
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related('user')
+        return super().get_queryset(request).select_related("user")
 
 
 admin.site.register(Account, AccountAdmin)

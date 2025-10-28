@@ -1,117 +1,88 @@
-![](https://pinaxproject.com/pinax-design/social-banners/DUA.png)
+# Django User Accounts (Backend API)
 
-[![](https://img.shields.io/pypi/v/django-user-accounts.svg)](https://pypi.python.org/pypi/django-user-accounts/)
+`django-user-accounts` is a Django application that provides a backend API for handling user accounts. It is designed to be integrated into larger projects that require user management functionality without the frontend components.
 
-[![Build](https://github.com/pinax/django-user-accounts/actions/workflows/ci.yaml/badge.svg)](https://github.com/pinax/django-user-accounts/actions)
-[![Codecov](https://img.shields.io/codecov/c/github/pinax/django-user-accounts.svg)](https://codecov.io/gh/pinax/django-user-accounts)
-[![](https://img.shields.io/github/contributors/pinax/django-user-accounts.svg)](https://github.com/pinax/django-user-accounts/graphs/contributors)
-[![](https://img.shields.io/github/issues-pr/pinax/django-user-accounts.svg)](https://github.com/pinax/django-user-accounts/pulls)
-[![](https://img.shields.io/github/issues-pr-closed/pinax/django-user-accounts.svg)](https://github.com/pinax/django-user-accounts/pulls?q=is%3Apr+is%3Aclosed)
+## Features
 
-[![](http://slack.pinaxproject.com/badge.svg)](http://slack.pinaxproject.com/)
-[![](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-
-
-# Table of Contents
-
-* [About Pinax](#about-pinax)
-* [Overview](#overview)
-  * [Features](#features)
-  * [Supported Django and Python versions](#supported-django-and-python-versions)
-* [Requirements](#requirements)
-* [Documentation](#documentation)
-* [Templates](#templates)
-* [Contribute](#contribute)
-* [Code of Conduct](#code-of-conduct)
-* [Connect with Pinax](#connect-with-pinax)
-* [License](#license)
-
-
-## About Pinax
-
-Pinax is an open-source platform built on the Django Web Framework. It is an ecosystem of reusable Django apps, themes, and starter project templates. This collection can be found at http://pinaxproject.com.
-
-
-## django-user-accounts
-
-### Overview
-
-`django-user-accounts` provides a Django project with a very extensible infrastructure for dealing with user accounts.
-
-#### Features
-
-* Functionality for:
-  * Log in (email or username authentication)
-  * Sign up
+* **User Account Management API:**
+  * User signup
   * Email confirmation
-  * Signup tokens for private betas
+  * Login (username/email)
+  * Logout
   * Password reset
-  * Password expiration
-  * Account management (update account settings and change password)
+  * Password change
+  * Account settings update
   * Account deletion
-* Extensible class-based views and hooksets
-* Custom `User` model support
+* **JSON-based Responses:** All views return JSON responses, making it easy to consume with a frontend framework or mobile application.
+* **Extensible:** Built with extensibility in mind using a hookset system.
+* **Custom `User` model support.**
 
-#### Supported Django and Python versions
+## Supported Django and Python versions
 
-Django / Python | 3.8 | 3.9 | 3.10 | 3.11
---------------- | --- | --- | ---- | ----
-3.2  |  *  |  *  |  *   |
-4.2  |  *  |  *  |  *   |  *
-
+| Django / Python | 3.8 | 3.9 | 3.10 | 3.11 |
+| --------------- | --- | --- | ---- | ---- |
+| 3.2             |  *  |  *  |  *   |      |
+| 4.2             |  *  |  *  |  *   |  *   |
 
 ## Requirements
 
 * Django 3.2 or 4.2
 * Python 3.8, 3.9, 3.10, 3.11
-* django-appconf (included in ``install_requires``)
-* pytz (included in ``install_requires``)
+* django-appconf (included in `install_requires`)
+* pytz (included in `install_requires`)
+
+## Setup
+
+1.  Add `account` to your `INSTALLED_APPS`:
+
+    ```python
+    INSTALLED_APPS = [
+        # ...
+        "account",
+        # ...
+    ]
+    ```
+
+2.  Run migrations:
+
+    ```bash
+    python manage.py migrate
+    ```
+
+## Usage
+
+The application provides API endpoints for user account management. You will need to create a `urls.py` file in the `account` app to expose the views as API endpoints.
+
+**Example `account/urls.py`:**
+
+```python
+from django.urls import path
+
+from . import views
+
+urlpatterns = [
+    path("signup/", views.SignupView.as_view(), name="account_signup"),
+    path("login/", views.LoginView.as_view(), name="account_login"),
+    path("logout/", views.LogoutView.as_view(), name="account_logout"),
+    path("confirm_email/<str:key>/", views.ConfirmEmailView.as_view(), name="account_confirm_email"),
+    path("password/change/", views.ChangePasswordView.as_view(), name="account_password_change"),
+    path("password/reset/", views.PasswordResetView.as_view(), name="account_password_reset"),
+    path("password/reset/<str:uidb36>/<str:token>/", views.PasswordResetTokenView.as_view(), name="account_password_reset_token"),
+    path("settings/", views.SettingsView.as_view(), name="account_settings"),
+    path("delete/", views.DeleteView.as_view(), name="account_delete"),
+]
+```
+
+Then, include these URLs in your project's root `urls.py`:
+
+```python
+from django.urls import path, include
+
+urlpatterns = [
+    # ...
+    path("api/account/", include("account.urls")),
+    # ...
+]
+```
 
 
-## Documentation
-
-See http://django-user-accounts.readthedocs.org/ for the `django-user-accounts` documentation.
-On September 17th, 2015, we did a Pinax Hangout on `django-user-accounts`. You can read the recap blog post and find the video here http://blog.pinaxproject.com/2015/10/12/recap-september-pinax-hangout/.
-
-The Pinax documentation is available at http://pinaxproject.com/pinax/. If you would like to help us improve our documentation or write more documentation, please join our Slack team and let us know!
-
-
-### Templates
-
-Default templates are provided by the `pinax-templates` app in the
-[account](https://github.com/pinax/pinax-templates/tree/master/pinax/templates/templates/account) section of that project.
-
-Reference pinax-templates
-[installation instructions](https://github.com/pinax/pinax-templates/blob/master/README.md#installation) to include these templates in your project.
-
-View live `pinax-templates` examples and source at [Pinax Templates](https://templates.pinaxproject.com/)!
-
-See the `django-user-accounts` [templates](https://django-user-accounts.readthedocs.io/en/latest/templates.html) documentation for more information.
-
-
-## Contribute
-
-For an overview on how contributing to Pinax works read this [blog post](http://blog.pinaxproject.com/2016/02/26/recap-february-pinax-hangout/)
-and watch the included video, or read our [How to Contribute](http://pinaxproject.com/pinax/how_to_contribute/) section. For concrete contribution ideas, please see our
-[Ways to Contribute/What We Need Help With](http://pinaxproject.com/pinax/ways_to_contribute/) section.
-
-In case of any questions we recommend you join our [Pinax Slack team](http://slack.pinaxproject.com) and ping us there instead of creating an issue on GitHub. Creating issues on GitHub is of course also valid but we are usually able to help you faster if you ping us in Slack.
-
-We also highly recommend reading our blog post on [Open Source and Self-Care](http://blog.pinaxproject.com/2016/01/19/open-source-and-self-care/).
-
-
-## Code of Conduct
-
-In order to foster a kind, inclusive, and harassment-free community, the Pinax Project
-has a [code of conduct](http://pinaxproject.com/pinax/code_of_conduct/).
-We ask you to treat everyone as a smart human programmer that shares an interest in Python, Django, and Pinax with you.
-
-
-## Connect with Pinax
-
-For updates and news regarding the Pinax Project, please follow us on Twitter [@pinaxproject](https://twitter.com/pinaxproject) and check out our [Pinax Project blog](http://blog.pinaxproject.com).
-
-
-## License
-
-Copyright (c) 2012-present James Tauber and contributors under the [MIT license](https://opensource.org/licenses/MIT).
