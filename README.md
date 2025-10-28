@@ -1,4 +1,4 @@
-# Django User Accounts (Backend API)
+# Django User Accounts Management (Backend API)
 
 This is a Django application that provides a backend API for handling user accounts. It is designed to be integrated into larger projects that require user management functionality without the frontend components.
 
